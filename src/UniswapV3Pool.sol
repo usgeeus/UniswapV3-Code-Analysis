@@ -99,7 +99,7 @@ contract UniswapV3Pool {
         slot0 = Slot0({sqrtPriceX96: sqrtPriceX96, tick: tick});
     }
 
-    //*The process of providing liquidity in Uniswap V2 is called minting. The reason is that the V2 pool contract mints tokens (LP-tokens) in exchange for liquidity. V3 doesn’t do that, but it still uses the same name for the function. Let’s use it as well:
+    //*The process of providing liquidity in UnInsufficientInputAmountl:
     function mint(
         address owner,
         int24 lowerTick,
@@ -150,7 +150,7 @@ contract UniswapV3Pool {
         uint256 balance0Before;
         uint256 balance1Before;
         if (amount0 > 0) balance0Before = balance0();
-        if (amount1 > 0) balance1Before = balance0();
+        if (amount1 > 0) balance1Before = balance1();
         IUniswapV3MintCallback(msg.sender).uniswapV3MintCallback(
             amount0,
             amount1,
