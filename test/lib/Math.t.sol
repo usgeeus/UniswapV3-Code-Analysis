@@ -6,6 +6,7 @@ import "forge-std/Test.sol";
 import "../../src/lib/Math.sol";
 import "../../src/lib/TickMath.sol";
 import "../../src/lib/SwapMath.sol";
+import "../../src/lib/TickBitmap.sol";
 
 contract MathTest is Test {
     function testCalcAmount0Delta() public {
@@ -27,7 +28,7 @@ contract MathTest is Test {
     }
 
     function testGetSqrtRatioAtTick() public {
-        uint160 sqrtPriceX96 = TickMath.getSqrtRatioAtTick(85248);
+        uint160 sqrtPriceX96 = TickMath.getSqrtRatioAtTick(85247);
         console.log(sqrtPriceX96);
     }
 
@@ -38,7 +39,7 @@ contract MathTest is Test {
             uint256 amountOut
         ) = SwapMath.computeSwapStep(
                 5602277097478614198912276234240,
-                5622427095139959043707335815652,
+                5622145994867546797787171334839,
                 1517882343751509868544,
                 42 ether
             );
@@ -50,5 +51,17 @@ contract MathTest is Test {
             5604469350942327889444743441197
         );
         console.log(uint256(int256(tick)));
+    }
+
+    mapping(int16 => uint256) tickBitmap;
+
+    function testNextInitializedTickWithinOneWord() public {
+        (int24 nextTick, ) = TickBitmap.nextInitializedTickWithinOneWord(
+            tickBitmap,
+            85176,
+            1,
+            false
+        );
+        console.log(uint24(nextTick));
     }
 }

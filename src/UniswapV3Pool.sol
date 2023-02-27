@@ -5,6 +5,7 @@ import "./interfaces/IERC20.sol";
 import "./interfaces/IUniswapV3MintCallback.sol";
 import "./interfaces/IUniswapV3SwapCallback.sol";
 
+import "./lib/LiquidityMath.sol";
 import "./lib/Math.sol";
 import "./lib/Position.sol";
 import "./lib/SwapMath.sol";
@@ -114,10 +115,10 @@ contract UniswapV3Pool {
 
         if (amount == 0) revert ZeroLiquidity();
 
-        bool flippedLower = ticks.update(lowerTick, amount);
-        bool flippedUpper = ticks.update(upperTick, amount);
+        bool flippedLower = ticks.update(lowerTick, int128(amount), false);
+        bool flippedUpper = ticks.update(upperTick, int128(amount), true);
         // liquidity is added to both of Ticks.
-        //I'll introduce different tickspacking Value later
+
         if (flippedLower) {
             tickBitmap.flipTick(lowerTick, 1);
         }
@@ -135,19 +136,36 @@ contract UniswapV3Pool {
 
         Slot0 memory slot0_ = slot0;
 
-        amount0 = Math.calcAmount0Delta(
-            TickMath.getSqrtRatioAtTick(slot0_.tick),
-            TickMath.getSqrtRatioAtTick(upperTick),
-            amount
-        );
+        if (slot0_.tick < lowerTick) {
+            amount0 = Math.calcAmount0Delta(
+                TickMath.getSqrtRatioAtTick(lowerTick),
+                TickMath.getSqrtRatioAtTick(upperTick),
+                amount
+            );
+        } else if (slot0_.tick < upperTick) {
+            amount0 = Math.calcAmount0Delta(
+                slot0_.sqrtPriceX96,
+                TickMath.getSqrtRatioAtTick(upperTick),
+                amount
+            );
 
-        amount1 = Math.calcAmount1Delta(
-            TickMath.getSqrtRatioAtTick(slot0_.tick),
-            TickMath.getSqrtRatioAtTick(lowerTick),
-            amount
-        );
+            amount1 = Math.calcAmount1Delta(
+                slot0_.sqrtPriceX96,
+                TickMath.getSqrtRatioAtTick(lowerTick),
+                amount
+            );
 
-        liquidity += uint128(amount);
+            //liquidity += uint128(amount);
+            // this is the only scenario where we want to update liquidity since the variable tracks liquidity that’s available immediately.
+            liquidity = LiquidityMath.addLiquidity(liquidity, int128(amount));
+        } else {
+            //when the price range is below the current price
+            amount1 = Math.calcAmount1Delta(
+                TickMath.getSqrtRatioAtTick(lowerTick),
+                TickMath.getSqrtRatioAtTick(upperTick),
+                amount
+            );
+        }
 
         uint256 balance0Before;
         uint256 balance1Before;

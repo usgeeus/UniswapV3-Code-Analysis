@@ -16,12 +16,27 @@ library SwapMath {
     {
         bool zeroForOne = sqrtPriceCurrentX96 >= sqrtPriceTargetX96;
 
-        sqrtPriceNextX96 = Math.getNextSqrtPriceFromInput(
-            sqrtPriceCurrentX96,
-            liquidity,
-            amountRemaining,
-            zeroForOne
-        );
+        amountIn = zeroForOne
+            ? Math.calcAmount0Delta( //selling token x
+                sqrtPriceCurrentX96,
+                sqrtPriceTargetX96,
+                liquidity
+            )
+            : Math.calcAmount1Delta( //selling token y
+                sqrtPriceCurrentX96,
+                sqrtPriceTargetX96,
+                liquidity
+            );
+
+        if (amountRemaining >= amountIn) sqrtPriceNextX96 = sqrtPriceTargetX96;//current price range cannot fulfil the whole swap, thus the next sqrtPriceNextX96 is the upper/lower sqrtPriceNextX96 of the price range.(in other words, we use the entire liquidity of the price range).
+        else {
+            sqrtPriceNextX96 = Math.getNextSqrtPriceFromInput(
+                sqrtPriceCurrentX96,
+                liquidity,
+                amountRemaining,
+                zeroForOne
+            );
+        }
 
         amountIn = Math.calcAmount0Delta(
             sqrtPriceCurrentX96,
