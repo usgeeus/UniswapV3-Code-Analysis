@@ -1,15 +1,16 @@
 //SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.14;
 
-import "./lib/Tick.sol";
-import "./lib/Position.sol";
-import "./lib/TickBitmap.sol";
-import "./lib/Math.sol";
-import "./lib/TickMath.sol";
-import "./lib/SwapMath.sol";
 import "./interfaces/IERC20.sol";
 import "./interfaces/IUniswapV3MintCallback.sol";
 import "./interfaces/IUniswapV3SwapCallback.sol";
+
+import "./lib/Math.sol";
+import "./lib/Position.sol";
+import "./lib/SwapMath.sol";
+import "./lib/Tick.sol";
+import "./lib/TickBitmap.sol";
+import "./lib/TickMath.sol";
 
 contract UniswapV3Pool {
     using Tick for mapping(int24 => Tick.Info);
@@ -17,7 +18,6 @@ contract UniswapV3Pool {
     using Position for mapping(bytes32 => Position.Info);
     using Position for Position.Info;
 
-    //custom errors
     error InsufficientInputAmount();
     error InvalidTickRange();
     error ZeroLiquidity();
@@ -49,19 +49,27 @@ contract UniswapV3Pool {
     address public immutable token0;
     address public immutable token1;
 
+    // First slot will contain essential data
+    struct Slot0 {
+        // Current sqrt(P)
+        uint160 sqrtPriceX96;
+        // Current tick
+        int24 tick;
+    }
+
     struct CallbackData {
         address token0;
         address token1;
         address payer;
     }
-    //amountSpecifiedRemaining tracks the remaining amount of tokens that needs to be bought by the pool. When it's zero, the swap is done.
-    //sqrtPriceX96 and tick are new current price and tick after a swap is done
+
     struct SwapState {
         uint256 amountSpecifiedRemaining;
         uint256 amountCalculated;
         uint160 sqrtPriceX96;
         int24 tick;
     }
+
     struct StepState {
         uint160 sqrtPriceStartX96;
         int24 nextTick;
@@ -70,21 +78,13 @@ contract UniswapV3Pool {
         uint256 amountOut;
     }
 
-    //Packing variables that are read together
-    struct Slot0 {
-        //Current sqrt(P)
-        uint160 sqrtPriceX96;
-        int24 tick;
-    }
     Slot0 public slot0;
 
-    //Amount of liquidity, L.
+    // Amount of liquidity, L.
     uint128 public liquidity;
 
-    // Ticks info
     mapping(int24 => Tick.Info) public ticks;
     mapping(int16 => uint256) public tickBitmap;
-    // Positions info
     mapping(bytes32 => Position.Info) public positions;
 
     constructor(
@@ -99,12 +99,11 @@ contract UniswapV3Pool {
         slot0 = Slot0({sqrtPriceX96: sqrtPriceX96, tick: tick});
     }
 
-    //*The process of providing liquidity in UnInsufficientInputAmountl:
     function mint(
         address owner,
         int24 lowerTick,
         int24 upperTick,
-        uint128 amount, //Liquidity Amount, later chapter, I'll make a helper contract that will convert token amounts to L before calling this mint function.
+        uint128 amount,
         bytes calldata data
     ) external returns (uint256 amount0, uint256 amount1) {
         if (
@@ -112,15 +111,17 @@ contract UniswapV3Pool {
             lowerTick < MIN_TICK ||
             upperTick > MAX_TICK
         ) revert InvalidTickRange();
+
         if (amount == 0) revert ZeroLiquidity();
+
         bool flippedLower = ticks.update(lowerTick, amount);
         bool flippedUpper = ticks.update(upperTick, amount);
         // liquidity is added to both of Ticks.
-
+        //I'll introduce different tickspacking Value later
         if (flippedLower) {
-            //I'll introduce different tickspacking Value later
             tickBitmap.flipTick(lowerTick, 1);
         }
+
         if (flippedUpper) {
             tickBitmap.flipTick(upperTick, 1);
         }
@@ -133,20 +134,21 @@ contract UniswapV3Pool {
         position.update(amount);
 
         Slot0 memory slot0_ = slot0;
+
         amount0 = Math.calcAmount0Delta(
-            slot0_.sqrtPriceX96,
+            TickMath.getSqrtRatioAtTick(slot0_.tick),
             TickMath.getSqrtRatioAtTick(upperTick),
             amount
         );
+
         amount1 = Math.calcAmount1Delta(
-            slot0_.sqrtPriceX96,
+            TickMath.getSqrtRatioAtTick(slot0_.tick),
             TickMath.getSqrtRatioAtTick(lowerTick),
             amount
         );
 
         liquidity += uint128(amount);
 
-        //ready to take tokens from user. This is done via a callback
         uint256 balance0Before;
         uint256 balance1Before;
         if (amount0 > 0) balance0Before = balance0();
@@ -157,7 +159,6 @@ contract UniswapV3Pool {
             data
         );
         if (amount0 > 0 && balance0Before + amount0 > balance0())
-            //이 컨트랙트의 balance가 안늘었다면..
             revert InsufficientInputAmount();
         if (amount1 > 0 && balance1Before + amount1 > balance1())
             revert InsufficientInputAmount();
@@ -173,17 +174,6 @@ contract UniswapV3Pool {
         );
     }
 
-    function balance0() internal returns (uint256 balance) {
-        balance = IERC20(token0).balanceOf(address(this));
-    }
-
-    function balance1() internal returns (uint256 balance) {
-        balance = IERC20(token1).balanceOf(address(this));
-    }
-
-    ///////////////////////SWAP//////////////////////
-    //@params zeroForOne when true, token0 is traded in for token1, when false opposite
-    //params amountSpecified amount of tokens user wants to sell
     function swap(
         address recipient,
         bool zeroForOne,
@@ -191,6 +181,7 @@ contract UniswapV3Pool {
         bytes calldata data
     ) public returns (int256 amount0, int256 amount1) {
         Slot0 memory slot0_ = slot0;
+
         SwapState memory state = SwapState({
             amountSpecifiedRemaining: amountSpecified,
             amountCalculated: 0,
@@ -198,9 +189,9 @@ contract UniswapV3Pool {
             tick: slot0_.tick
         });
 
-        //loop until pool has enough liquidity to buy amountSpecified tokens from user
         while (state.amountSpecifiedRemaining > 0) {
             StepState memory step;
+
             step.sqrtPriceStartX96 = state.sqrtPriceX96;
 
             (step.nextTick, ) = tickBitmap.nextInitializedTickWithinOneWord(
@@ -208,14 +199,17 @@ contract UniswapV3Pool {
                 1,
                 zeroForOne
             );
+
             step.sqrtPriceNextX96 = TickMath.getSqrtRatioAtTick(step.nextTick);
+
             (state.sqrtPriceX96, step.amountIn, step.amountOut) = SwapMath
                 .computeSwapStep(
-                    state.sqrtPriceX96,
+                    step.sqrtPriceStartX96,
                     step.sqrtPriceNextX96,
                     liquidity,
                     state.amountSpecifiedRemaining
                 );
+
             state.amountSpecifiedRemaining -= step.amountIn;
             state.amountCalculated += step.amountOut;
             state.tick = TickMath.getTickAtSqrtRatio(state.sqrtPriceX96);
@@ -268,5 +262,18 @@ contract UniswapV3Pool {
             liquidity,
             slot0.tick
         );
+    }
+
+    ////////////////////////////////////////////////////////////////////////////
+    //
+    // INTERNAL
+    //
+    ////////////////////////////////////////////////////////////////////////////
+    function balance0() internal returns (uint256 balance) {
+        balance = IERC20(token0).balanceOf(address(this));
+    }
+
+    function balance1() internal returns (uint256 balance) {
+        balance = IERC20(token1).balanceOf(address(this));
     }
 }
